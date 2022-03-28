@@ -20,11 +20,14 @@ import matplotlib.cm as cm
 import pandas as pd
 import numpy as np
 import itertools
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import train_test_split
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from sklearn.metrics import silhouette_samples
 from sklearn import metrics
 from sklearn.decomposition import PCA
+from sklearn.decomposition import KernelPCA
 from sklearn.decomposition import FastICA
 from sklearn.random_projection import GaussianRandomProjection
 from sklearn.mixture import GaussianMixture
@@ -32,9 +35,14 @@ from sklearn.manifold import TSNE
 import math
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
-from sklearn.manifold import TSNE
 from sklearn.metrics import adjusted_rand_score, adjusted_mutual_info_score, completeness_score, \
                             homogeneity_score, v_measure_score, silhouette_samples, silhouette_score
+
+import time
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
+from sklearn.model_selection import cross_val_predict
+from sklearn.neural_network import MLPClassifier
+
 
 
 IMAGE_DIR = '/Users/dicksonnkwantabisa/Desktop/CS7641-MachineLearning/Unsupervised Learning and Dimensionality Reduction/images/'  # output images directory
@@ -214,7 +222,224 @@ def plot_components(component1, component2, df, dataset,name):
     plt.ylim(-ylim, ylim)
     save_figure('{}_{}_components'.format(dataset, name))
     
+def split_dataset(X, y, dataset):
+    x_train, x_test, y_train, y_test = train_test_split(
+        X, y, shuffle=True, random_state=42,
+        test_size = 0.2)
+    scaler = MinMaxScaler()
+    x_train = scaler.fit_transform(x_train)
+    x_test = scaler.fit_transform(x_test)    
+    print('\nTotal  data size of {} :'.format(dataset))
+    print('Training data set: {}'.format(x_train.shape))
+    print('Testing data set: {}'.format(x_test.shape))
+    return x_train, x_test, y_train, y_test
+
+
+def time_series_data_split(X, y, dataset):
+    t = .8
+    split = int(t*len(X))
+    x_train, x_test, y_train, y_test = X[:split], X[split:], y[:split], y[split:]
+    scaler = MinMaxScaler()
+    x_train = scaler.fit_transform(x_train)
+    x_test = scaler.fit_transform(x_test)    
+    print('\nTotal  data size of {} :'.format(dataset))
+    print('Training data set: {}'.format(x_train.shape))
+    print('Testing data set: {}'.format(x_test.shape))
+    return x_train, x_test, y_train, y_test
+
+
+def kmeans_experiment(x_train, x_test, y_train, y_test,dataset,n_clusters=2):
+    # plot model complexity
+    plot_model_complexity_KMeans(x_train, dataset)
+    # fit the model and benchmark on training data
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+    clusters_train = kmeans.fit_predict(x_train)
+    clusters_test = kmeans.predict(x_test)
+    print('\nTraining score:')
+    benchmark(x_train, y_train, clusters_train)
+    print('\nTesting score:')
+    benchmark(x_test, y_test, clusters_test)
+    # ##  plot clusters # ##
+    # Declare PCA and reduce data
+    pca = PCA(n_components=2, random_state=42)
+    x_pca = pca.fit_transform(x_train)
+    # Declare TSNE and reduce data
+    tsne = TSNE(n_components=2, random_state=42)
+    x_tsne = tsne.fit_transform(x_train)
+    # Create dataframe for visualization
+    df = pd.DataFrame(x_tsne, columns=['tsne1', 'tsne2'])
+    df['pca1'] = x_pca[:, 0]
+    df['pca2'] = x_pca[:, 1]
+    df['y'] = y_train
+    df['c'] = clusters_train
+    # Create subplot and plot clusters with PCA and TSNE
+    fig, (ax1, ax2) = plt.subplots(2, 2, figsize=(13, 10))
+    plot_clusters(ax1, 'pca1', 'pca2', df, name='PCA')
+    plot_clusters(ax2, 'tsne1', 'tsne2', df, name='tSNE')
+    # Save figure
+    save_figure_tight('{}_{}_clusters'.format(dataset,'kmeans'))
+    return clusters_train, clusters_test
     
+def gmm_experiment(x_train, x_test, y_train, y_test,dataset,n_components=2):
+    # plot model complexity
+    plot_model_complexity_GMM(x_train, dataset)
+    # fit the model and benchmark on training data
+    gmm = GaussianMixture(n_components=n_components,
+                          random_state=42, covariance_type='full',
+                          max_iter=1000, n_init=10, init_params='random',)
+    clusters_train = gmm.fit_predict(x_train)
+    clusters_test = gmm.predict(x_test)
+    print('\nTraining scores:')
+    benchmark(x_train, y_train, clusters_train)
+    print('\nTesting scores:')
+    benchmark(x_test, y_test, clusters_test)
+    # ##  plot clusters # ##
+    # Declare PCA and reduce data
+    pca = PCA(n_components=2, random_state=42)
+    x_pca = pca.fit_transform(x_train)
+    # Declare TSNE and reduce data
+    tsne = TSNE(n_components=2, random_state=42)
+    x_tsne = tsne.fit_transform(x_train)
+    # Create dataframe for visualization
+    df = pd.DataFrame(x_tsne, columns=['tsne1', 'tsne2'])
+    df['pca1'] = x_pca[:, 0]
+    df['pca2'] = x_pca[:, 1]
+    df['y'] = y_train
+    df['c'] = clusters_train
+    # Create subplot and plot clusters with PCA and TSNE
+    fig, (ax1, ax2) = plt.subplots(2, 2, figsize=(13, 10))
+    plot_clusters(ax1, 'pca1', 'pca2', df, name='PCA')
+    plot_clusters(ax2, 'tsne1', 'tsne2', df, name='tSNE')
+    # Save figure
+    save_figure_tight('{}_{}_clusters'.format(dataset,'gmm'))
+    return clusters_train, clusters_test
+   
+def experiment_ica(x_train, y_train,x_test, dataset,n_components, name):
+       """Perform experiments.
+           Args:
+              x_train (ndarray): training data.
+              x_test (ndarray): test data.
+              y_train (ndarray): training labels.
+              dataset (string): dataset, Churn or ETF.
+              n_components: number of components
+              name (string): name of dimensionality reduction technique.
+           Returns:
+             x_train_reduced (ndarray): reduced training data.
+           """
+       model = FastICA(n_components=n_components, random_state=42, max_iter=1000)
+       print('\nTrain on training set')
+       x_train_reduced = model.fit_transform(x_train)  # fit
+       mse = np.mean((x_train - model.inverse_transform(x_train_reduced))**2)
+       print('ICA reconstruction error is :', mse)
+       df = pd.DataFrame(x_train_reduced[:,:2], columns=['ica1','ica2'])
+       df['y'] = y_train
+       plot_components('ica1', 'ica2', df=df, dataset=dataset, name=name)  # visualize components
+       return x_train_reduced, model.transform(x_test), model.inverse_transform(x_train_reduced)  # return reduced training and test data
+
+    
+def experiment_pca(x_train, y_train,x_test, dataset,n_components, name):
+       """Perform experiments.
+           Args:
+              x_train (ndarray): training data.
+              x_test (ndarray): test data.
+              y_train (ndarray): training labels.
+              dataset (string): dataset, Churn or ETF.
+              name (string): name of dimensionality reduction technique.
+           Returns:
+             x_train_reduced (ndarray): reduced training data.
+           """
+       model = PCA(n_components=n_components, random_state=42)
+
+       print('\nTrain on training set')
+       x_train_reduced = model.fit_transform(x_train)  # fit
+       mse = np.mean((x_train - model.inverse_transform(x_train_reduced))**2)
+       print('Reconstruction error:', mse)
+       df = pd.DataFrame(x_train_reduced[:,:2], columns=['ica1','ica2'])
+       df['y'] = y_train
+       plot_components('ica1', 'ica2', df=df, dataset=dataset, name=name)  # visualize components
+       return x_train_reduced, model.transform(x_test),model.inverse_transform(x_train_reduced)  # return reduced training and test data    
+    
+def experiment_kpca(x_train, y_train,x_test, dataset,n_components, name):
+       """Perform experiments.
+           Args:
+              x_train (ndarray): training data.
+              x_test (ndarray): test data.
+              y_train (ndarray): training labels.
+              dataset (string): dataset, Churn or ETF.
+              name (string): name of dimensionality reduction technique.
+           Returns:
+             x_train_reduced (ndarray): reduced training data.
+           """
+       model = KernelPCA(n_components=n_components, kernel='sigmoid',
+                         fit_inverse_transform=True,random_state=42, n_jobs=-1)
+       print('\nTrain on training set')
+       x_train_reduced = model.fit_transform(x_train)  # fit
+       mse = np.mean((x_train - model.inverse_transform(x_train_reduced))**2)
+       print('Reconstruction error:', mse)
+       df = pd.DataFrame(x_train_reduced[:,:2], columns=['ica1','ica2'])
+       df['y'] = y_train
+       plot_components('ica1', 'ica2', df=df, dataset=dataset, name=name)  # visualize components
+       return x_train_reduced, model.transform(x_test),model.inverse_transform(x_train_reduced)  # return reduced training and test data    
+   
+def experiment_rgp(x_train, y_train,x_test, dataset,n_components,eps, name):
+       """Perform experiments.
+           Args:
+              x_train (ndarray): training data.
+              x_test (ndarray): test data.
+              y_train (ndarray): training labels.
+              dataset (string): dataset, Churn or ETF.
+              name (string): name of dimensionality reduction technique.
+           Returns:
+             x_train_reduced (ndarray): reduced training data.
+           """
+       model = InvertibleRandomProjection(n_components=n_components,random_state=42,eps=eps,)
+       print('\nTrain on training set')
+       x_train_reduced = model.fit_transform(x_train)  # fit
+       mse = np.mean((x_train - model.inverse_transform(x_train_reduced))**2) # pseudo inverse
+       print('Reconstruction error:', mse)
+       df = pd.DataFrame(x_train_reduced[:,:2], columns=['ica1','ica2'])
+       df['y'] = y_train
+       plot_components('ica1', 'ica2', df=df, dataset=dataset, name=name)  # visualize components
+       return x_train_reduced, model.transform(x_test),model.inverse_transform(x_train_reduced)  # return reduced training and test data    
+  
+
+
+def rand_gauss(x, dataset):
+    """
+    run several random gaussian projections
+    and see what happen!
+    LOL !!
+    """
+# Authors: Alexandre Gramfort, Gael Varoquaux
+# License: BSD 3 clause
+# #############################################################################
+    for component in range(1,5):
+        rgp = InvertibleRandomProjection(n_components=component,)
+        
+        runs =1000
+        rgp_dim = np.zeros((x.shape[0], component, runs))
+        for run in range(runs):
+            rgp = InvertibleRandomProjection(n_components=component,random_state=np.random.randint(0,16108),)
+            x_transform = rgp.fit_transform(x)
+            rgp_dim[:,:, run]+=x_transform
+        run_average = np.mean(rgp_dim, axis=2)
+        run_st_dev = np.std(rgp_dim, axis=2)
+        component_average = np.mean(run_average, axis=0)
+        component_st_dev = np.std(run_st_dev, axis=0)
+    
+    # plot distribution
+    plt.hist([np.random.normal(loc=component_average[idx], scale=component_st_dev[idx], size=10000) for idx in range(len(component_st_dev))],
+             bins=100, histtype='step', label=['RP_1', 'RP_2', 'RP_3', 'RP_4']);
+    [plt.plot([component_average[idx],component_average[idx]],[0,400],label='RP_'+str(idx)+'_avg',linestyle='dashed') for idx in range(len(component_average))]
+    plt.legend()
+    plt.title('Distribution of 1000 runs of Radomized Gaussian Projections')
+    plt.ylabel('Value Count (100k sample)')
+    plt.xlabel('Random Component value')
+    plt.tight_layout()
+    plt.show()
+    save_figure_tight('{}_RP_histograms'.format(dataset))          
+        
+  
 def viz_clusters_KMeans(X, y, dataset, method):
     # Declare PCA and reduce data
     pca = PCA(n_components=2, random_state=42)
@@ -336,7 +561,7 @@ def plot_model_complexity_KMeans(x, dataset):
 
 
 
-def plot_model_complexity_GMM(x, dataset,n_components_range = range(1, 11)):  
+def plot_model_complexity_GMM(x, dataset,n_components_range = range(1, 21)):  
     """Perform and plot model complexity.
         Args:
            x (ndarray): training data.
@@ -426,23 +651,6 @@ def plot_model_complexity_GMM(x, dataset,n_components_range = range(1, 11)):
  
     # Save figure
     save_figure_tight('{}_gmm_model_complexity'.format(dataset))
-
-
-def plot_model_complexity_gmm(x, dataset): 
-    
-    """Perform and plot model complexity.
-        Args:
-           x (ndarray): training data.
-           dataset (string): dataset, Churn or ETF.
-        Returns:
-           None.
-        """
-    
- 
-    # Save figure
-    save_figure_tight('{}_gmm_model_complexity'.format(dataset))
-
-
 
 
 
@@ -560,10 +768,338 @@ def save_figure(title):
     plt.close()
         
    
+class InvertibleRandomProjection(GaussianRandomProjection):
+    """Gaussian random projection with an inverse transform using the pseudoinverse."""
+
+    def __init__(
+        self, n_components="auto", eps=0.3, orthogonalize=False, random_state=None
+    ):
+        self.orthogonalize = orthogonalize
+        super().__init__(n_components=n_components, eps=eps, random_state=random_state)
+
+    @property
+    def pseudoinverse(self):
+        """Pseudoinverse of the random projection.
+
+        This inverts the projection operation for any vector in the span of the
+        random projection. For small enough `eps`, this should be close to the
+        correct inverse.
+        """
+        try:
+            return self._pseudoinverse
+        except AttributeError:
+            if self.orthogonalize:
+                # orthogonal matrix: inverse is just its transpose
+                self._pseudoinverse = self.components_
+            else:
+                self._pseudoinverse = np.linalg.pinv(self.components_.T)
+            return self._pseudoinverse
+    def fit(self, X):
+         super().fit(X)
+         if self.orthogonalize:
+             Q, _ = np.linalg.qr(self.components_.T)
+             self.components_ = Q.T
+         return self
+     
+    def inverse_transform(self, X):
+        return X.dot(self.pseudoinverse)
+         
+
+   
+  #%% The following functions/classes are used in the Neural Networks
+
+class NeuralNetwork:
+
+    def __init__(self, layer1_nodes, layer2_nodes, learning_rate):
+        """Initialize a Neural Network classifier.
+            Args:
+                layer1_nodes (int): number of neurons in the first layer.
+                layer2_nodes (int): number of neurons in the second layer.
+                learning_rate (float): learning rate.
+            Returns:
+                None.
+            """
+        self.model = MLPClassifier(hidden_layer_sizes=(layer1_nodes, layer2_nodes), activation='logistic',
+                                   solver='sgd', alpha=0.001, batch_size=200, learning_rate='adaptive',
+                                   learning_rate_init=learning_rate, max_iter=100, tol=1e-4,
+                                   early_stopping=False, validation_fraction=0.1, momentum=0.5,
+                                   n_iter_no_change=100, random_state=42)
+
+    def evaluate(self, x_test, y_test,x_train,y_train):
+        """Evaluate the model by reporting the classification report
+        the confusion matrix and roc scores.
+            Args:
+                x_test (ndarray): test data.
+                y_test (ndarray): test labels.
+            Returns:
+                None.
+            """
+        predictions = self.predict(x_test)  # predict on test data
+        y_score = cross_val_predict(self.model, X=x_train, y=y_train,
+                                    cv=5, method='predict_proba')[:,1]
+        pred_scores = dict(y_true=y_train, y_score=y_score)
         
+        print('\nEvaluate on the Test Set')
+        print(classification_report(y_test, predictions))  # produce classification report
+        print('Confusion Matrix:')
+        print(confusion_matrix(y_test, predictions))  # produce confusion matrix
+        print('AUC_ROC score:')
+        print(roc_auc_score(**pred_scores))  # produce roc score
+
+
+    def fit(self, x_train, y_train):
+        """Fit the model by on the training data.
+            Args:
+                x_train (ndarray): training data.
+                y_train (ndarray): training labels.
+            Returns:
+                None.
+            """
+        # Fit the model and report training time
+        start_time = time.time()
+        self.model.fit(x_train, y_train)
+        end_time = time.time()
+
+        print('\nFitting Training Set: {:.4f} seconds'.format(end_time-start_time))
+
+    def predict(self, x):
+        """Predict on some data.
+            Args:
+                x (ndarray): data to predict.
+            Returns:
+                predictions (ndarray): array of labels predictions.
+            """
+        # Predict and report inference time
+        start_time = time.time()
+        predictions = self.model.predict(x)
+        end_time = time.time()
+
+        print('\nPredicting on Testing Set: {:.4f} seconds'.format(end_time-start_time))
+
+        return predictions
+
+    def experiment(self, x_train, x_test, y_train, y_test):
+        """Run an experiment on the model.
+            Fit on training data and evaluate the model on the test set.
+            Args:
+               x_train (ndarray): training data.
+               x_test (ndarray): test data.
+               y_train (ndarray): training labels.
+               y_test (ndarray): test labels.
+            Returns:
+               None.
+            """
+        self.fit(x_train, y_train)
+        self.evaluate(x_test, y_test, x_train, y_train)
         
-        
-        
-        
+              
+
+def nn_experiment(x_train, x_test, y_train, y_test,
+                  x_ica, x_pca, x_kpca, x_rgp,
+                  kmeans_clusters_ica, kmeans_clusters_pca,
+                  kmeans_clusters_kpca, kmeans_clusters_rgp,
+                  gmm_clusters_ica, gmm_clusters_pca,
+                  gmm_clusters_kpca, gmm_clusters_rgp,
+                  **kwargs):
+    """
+    this function will run neural net experiments
+    1. run NN on each reduced data ( NN + ICA,PCA,kPCA,RGP)
+    2. add clustring results each from KMeans and GMM to 
+    original features and rerun NN
+    """
+    
+    print('\n------------')
+    print('NN')
+    print('---------------')
+    
+    # run NN on original dataset
+    nn = NeuralNetwork(layer1_nodes=10,
+                       layer2_nodes=10,learning_rate=0.05,
+                       )
+    nn.experiment(x_train, x_test, y_train, y_test)
+    
+    
+    print('\n------------')
+    print('NN + PCA')
+    print('---------------')
+    
+    nn = NeuralNetwork(layer1_nodes=10,
+                       layer2_nodes=10,learning_rate=0.05,
+                       )
+    nn.experiment(x_pca[0], x_pca[1], y_train, y_test)
+
+    print('\n------------')
+    print('NN + kPCA')
+    print('---------------')
+    
+    nn = NeuralNetwork(layer1_nodes=10,
+                       layer2_nodes=10,learning_rate=0.05,
+                       )
+    nn.experiment(x_kpca[0], x_kpca[1], y_train, y_test)
+    
+    print('\n------------')
+    print('NN + ICA')
+    print('---------------')
+    
+    nn = NeuralNetwork(layer1_nodes=10,
+                       layer2_nodes=10,learning_rate=0.05,
+                       )
+    nn.experiment(x_ica[0], x_ica[1], y_train, y_test)
+    
+    
+    print('\n------------')
+    print('NN + RGP')
+    print('---------------')
+    
+    nn = NeuralNetwork(layer1_nodes=10,
+                       layer2_nodes=10,learning_rate=0.05,
+                       )
+    nn.experiment(x_rgp[0], x_rgp[1], y_train, y_test)
+    
+    print('\n------------')
+    print('NN + kmeans_ica_clusters + original features')
+    print('---------------')
+    
+    nn = NeuralNetwork(layer1_nodes=10,
+                       layer2_nodes=10,learning_rate=0.05,
+                       )
+    
+    # Add ica reduced kmeans clusters to orignal data
+    ica_km_normed = (kmeans_clusters_ica[0]-np.min(kmeans_clusters_ica[0])) / (np.max(kmeans_clusters_ica[0])-np.min(kmeans_clusters_ica[0]))
+    ica_km_normed = np.expand_dims(ica_km_normed, axis=1)
+    ica_new_x_train = np.append(x_train, ica_km_normed, axis=1)
+    ica_km_normed = (kmeans_clusters_ica[1]-np.min(kmeans_clusters_ica[1])) / (np.max(kmeans_clusters_ica[1])-np.min(kmeans_clusters_ica[1]))
+    ica_km_normed = np.expand_dims(ica_km_normed, axis=1)
+    ica_new_x_test = np.append(x_test, ica_km_normed, axis=1)
+    
+    nn.experiment(ica_new_x_train, ica_new_x_test, y_train, y_test)
+
+    print('\n------------')
+    print('NN + kmeans_clusters_pca + original features')
+    print('---------------')
+    
+    nn = NeuralNetwork(layer1_nodes=10,
+                       layer2_nodes=10,learning_rate=0.05,
+                       )
+    
+    # Add ica reduced kmeans clusters to orignal data
+    pca_km_normed = (kmeans_clusters_pca[0]-np.min(kmeans_clusters_pca[0])) / (np.max(kmeans_clusters_pca[0])-np.min(kmeans_clusters_pca[0]))
+    pca_km_normed = np.expand_dims(pca_km_normed, axis=1)
+    pca_new_x_train = np.append(x_train, pca_km_normed, axis=1)
+    pca_km_normed = (kmeans_clusters_pca[1]-np.min(kmeans_clusters_pca[1])) / (np.max(kmeans_clusters_pca[1])-np.min(kmeans_clusters_pca[1]))
+    pca_km_normed = np.expand_dims(pca_km_normed, axis=1)
+    pca_new_x_test = np.append(x_test, pca_km_normed, axis=1)
+    
+    nn.experiment(pca_new_x_train, pca_new_x_test, y_train, y_test)
+
+    print('\n------------')
+    print('NN + kmeans_clusters_kpca + original features')
+    print('---------------')
+    
+    nn = NeuralNetwork(layer1_nodes=10,
+                       layer2_nodes=10,learning_rate=0.05,
+                       )
+    
+    # Add ica reduced kmeans clusters to orignal data
+    kpca_km_normed = (kmeans_clusters_kpca[0]-np.min(kmeans_clusters_kpca[0])) / (np.max(kmeans_clusters_kpca[0])-np.min(kmeans_clusters_kpca[0]))
+    kpca_km_normed = np.expand_dims(kpca_km_normed, axis=1)
+    kpca_new_x_train = np.append(x_train, kpca_km_normed, axis=1)
+    kpca_km_normed = (kmeans_clusters_kpca[1]-np.min(kmeans_clusters_kpca[1])) / (np.max(kmeans_clusters_kpca[1])-np.min(kmeans_clusters_kpca[1]))
+    kpca_km_normed = np.expand_dims(kpca_km_normed, axis=1)
+    kpca_new_x_test = np.append(x_test, kpca_km_normed, axis=1)
+    
+    nn.experiment(kpca_new_x_train, kpca_new_x_test, y_train, y_test)
+    
+    print('\n------------')
+    print('NN + kmeans_clusters_rgp + original features')
+    print('---------------')
+    
+    nn = NeuralNetwork(layer1_nodes=10,
+                       layer2_nodes=10,learning_rate=0.05,
+                       )
+    
+    # Add ica reduced kmeans clusters to orignal data
+    rgp_km_normed = (kmeans_clusters_rgp[0]-np.min(kmeans_clusters_rgp[0])) / (np.max(kmeans_clusters_rgp[0])-np.min(kmeans_clusters_rgp[0]))
+    rgp_km_normed = np.expand_dims(rgp_km_normed, axis=1)
+    rgp_new_x_train = np.append(x_train, rgp_km_normed, axis=1)
+    rgp_km_normed = (kmeans_clusters_rgp[1]-np.min(kmeans_clusters_rgp[1])) / (np.max(kmeans_clusters_rgp[1])-np.min(kmeans_clusters_rgp[1]))
+    rgp_km_normed = np.expand_dims(rgp_km_normed, axis=1)
+    rgp_new_x_test = np.append(x_test, rgp_km_normed, axis=1)
+    
+    nn.experiment(rgp_new_x_train, rgp_new_x_test, y_train, y_test)
+    
+    print('\n------------')
+    print('NN + gmm_clusters_ica + original features')
+    print('---------------')
+    
+    nn = NeuralNetwork(layer1_nodes=10,
+                       layer2_nodes=10,learning_rate=0.05,
+                       )
+    
+    # Add ica reduced kmeans clusters to orignal data
+    ica_gmm_normed = (gmm_clusters_ica[0]-np.min(gmm_clusters_ica[0])) / (np.max(gmm_clusters_ica[0])-np.min(gmm_clusters_ica[0]))
+    ica_gmm_normed = np.expand_dims(ica_gmm_normed, axis=1)
+    ica_new_x_train = np.append(x_train, ica_gmm_normed, axis=1)
+    ica_gmm_normed = (gmm_clusters_ica[1]-np.min(gmm_clusters_ica[1])) / (np.max(gmm_clusters_ica[1])-np.min(gmm_clusters_ica[1]))
+    ica_gmm_normed = np.expand_dims(ica_gmm_normed, axis=1)
+    ica_new_x_test = np.append(x_test, ica_gmm_normed, axis=1)
+    
+    nn.experiment(ica_new_x_train, ica_new_x_test, y_train, y_test)
+
+    print('\n------------')
+    print('NN + gmm_clusters_pca + original features')
+    print('---------------')
+    
+    nn = NeuralNetwork(layer1_nodes=10,
+                       layer2_nodes=10,learning_rate=0.05,
+                       )
+    
+    # Add ica reduced kmeans clusters to orignal data
+    pca_gmm_normed = (gmm_clusters_pca[0]-np.min(gmm_clusters_pca[0])) / (np.max(gmm_clusters_pca[0])-np.min(gmm_clusters_pca[0]))
+    pca_gmm_normed = np.expand_dims(pca_gmm_normed, axis=1)
+    pca_new_x_train = np.append(x_train, pca_gmm_normed, axis=1)
+    pca_gmm_normed = (gmm_clusters_pca[1]-np.min(gmm_clusters_pca[1])) / (np.max(gmm_clusters_pca[1])-np.min(gmm_clusters_pca[1]))
+    pca_gmm_normed = np.expand_dims(pca_gmm_normed, axis=1)
+    pca_new_x_test = np.append(x_test, pca_gmm_normed, axis=1)
+    
+    nn.experiment(pca_new_x_train, pca_new_x_test, y_train, y_test)
+
+    print('\n------------')
+    print('NN + gmm_clusters_kpca + original features')
+    print('---------------')
+    
+    nn = NeuralNetwork(layer1_nodes=10,
+                       layer2_nodes=10,learning_rate=0.05,
+                       )
+    
+    # Add ica reduced kmeans clusters to orignal data
+    kpca_gmm_normed = (gmm_clusters_kpca[0]-np.min(gmm_clusters_kpca[0])) / (np.max(gmm_clusters_kpca[0])-np.min(gmm_clusters_kpca[0]))
+    kpca_gmm_normed = np.expand_dims(kpca_gmm_normed, axis=1)
+    kpca_new_x_train = np.append(x_train, kpca_gmm_normed, axis=1)
+    kpca_gmm_normed = (gmm_clusters_kpca[1]-np.min(gmm_clusters_kpca[1])) / (np.max(gmm_clusters_kpca[1])-np.min(gmm_clusters_kpca[1]))
+    kpca_gmm_normed = np.expand_dims(kpca_gmm_normed, axis=1)
+    kpca_new_x_test = np.append(x_test, kpca_gmm_normed, axis=1)
+    
+    nn.experiment(kpca_new_x_train, kpca_new_x_test, y_train, y_test)
+
+    print('\n------------')
+    print('NN + gmm_clusters_rgp + original features')
+    print('---------------')
+    
+    nn = NeuralNetwork(layer1_nodes=10,
+                       layer2_nodes=10,learning_rate=0.05,
+                       )
+    
+    # Add ica reduced kmeans clusters to orignal data
+    rgp_gmm_normed = (gmm_clusters_rgp[0]-np.min(gmm_clusters_rgp[0])) / (np.max(gmm_clusters_rgp[0])-np.min(gmm_clusters_rgp[0]))
+    rgp_gmm_normed = np.expand_dims(rgp_gmm_normed, axis=1)
+    rgp_new_x_train = np.append(x_train, rgp_gmm_normed, axis=1)
+    rgp_gmm_normed = (gmm_clusters_rgp[1]-np.min(gmm_clusters_rgp[1])) / (np.max(gmm_clusters_rgp[1])-np.min(gmm_clusters_rgp[1]))
+    rgp_gmm_normed = np.expand_dims(rgp_gmm_normed, axis=1)
+    rgp_new_x_test = np.append(x_test, rgp_gmm_normed, axis=1)
+    
+    nn.experiment(rgp_new_x_train, rgp_new_x_test, y_train, y_test)
+
+       
         
         
